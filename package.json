@@ -1,0 +1,24 @@
+{
+  "name": "@yorozu/openclaw-channel",
+  "version": "0.1.0",
+  "description": "Yorozu as an OpenClaw chat channel, over the Yorozu host's channel.sock",
+  "license": "MIT",
+  "type": "module",
+  "repository": "github:izyuumi/yorozu-openclaw-channel",
+  "openclaw": {
+    "extensions": ["./index.js"],
+    "setupEntry": "./setup-entry.js",
+    "channel": {
+      "id": "yorozu",
+      "label": "Yorozu",
+      "blurb": "Chat with OpenClaw from Yorozu on this Mac, iPhone and iPad."
+    },
+    "compat": {
+      "pluginApi": ">=2026.9.1",
+      "minGatewayVersion": "2026.9.1"
+    }
+  },
+  "scripts": {
+    "test": "node --test test/*.test.js"
+  }
+}

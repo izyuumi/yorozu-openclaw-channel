@@ -1,0 +1,19 @@
+{
+  "id": "yorozu",
+  "name": "Yorozu",
+  "description": "Yorozu app as an OpenClaw chat channel, over Yorozu's local channel socket.",
+  "channels": ["yorozu"],
+  "configSchema": { "type": "object", "additionalProperties": false, "properties": {} },
+  "channelConfigs": {
+    "yorozu": {
+      "schema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "enabled": { "type": "boolean" },
+          "socketPath": { "type": "string" }
+        }
+      }
+    }
+  }
+}
