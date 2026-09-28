@@ -19,7 +19,8 @@ openclaw agents bind --bind yorozu
 openclaw gateway restart
 ```
 
-`agents bind` routes Yorozu to OpenClaw's default agent; add `--agent <id>` to pick another.
+OpenClaw asks you to confirm a source outside ClawHub; in a non-interactive shell, add
+`--force` to the install line. `agents bind` routes Yorozu to OpenClaw's default agent; add `--agent <id>` to pick another.
 With several agents and no binding, OpenClaw rejects every Yorozu message.
 
 `openclaw channels status` then lists **Yorozu** as connected while Yorozu is running.
