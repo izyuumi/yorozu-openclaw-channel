@@ -6,9 +6,10 @@ import { join } from "node:path";
 import test from "node:test";
 import { connectYorozu } from "../socket.js";
 
-/** A fake Yorozu host: records frames, lets the test write back. */
+/** A fake Yorozu host: records frames (hellos apart), lets the test write back. */
 function fakeHost(path) {
   const frames = [];
+  const hellos = [];
   let client;
   const server = createServer((socket) => {
     client = socket;
@@ -18,12 +19,17 @@ function fakeHost(path) {
       buffer += chunk;
       const lines = buffer.split("\n");
       buffer = lines.pop() ?? "";
-      for (const line of lines) if (line) frames.push(JSON.parse(line));
+      for (const line of lines) {
+        if (!line) continue;
+        const frame = JSON.parse(line);
+        (frame.type === "hello" ? hellos : frames).push(frame);
+      }
     });
   });
   server.listen(path);
   return {
     frames,
+    hellos,
     write: (frame) => client.write(`${JSON.stringify(frame)}\n`),
     drop: () => client?.destroy(),
     close: () => new Promise((done) => { client?.destroy(); server.close(() => done()); }),
@@ -81,6 +87,19 @@ test("a failed inbound is not acked, so the host resends it", async () => {
   host.write({ type: "inbound", message: { id: "u2", threadId: "t1", ts: 1, text: "hi" } });
   await until(() => host.frames.length === 1);
   assert.deepEqual(host.frames[0], { type: "ack", id: "u2" });
+  link.close();
+  await host.close();
+});
+
+test("says hello with its capabilities on every connection, before anything else", async () => {
+  const path = join(mkdtempSync(join(tmpdir(), "yorozu-link-")), "channel.sock");
+  const host = fakeHost(path);
+  const link = connectYorozu({ path, retryMs: 20, capabilities: ["run-boundary-v1"], onInbound: async () => {} });
+  await until(() => host.hellos.length === 1);
+  host.drop();
+  await until(() => host.hellos.length === 2);
+  assert.deepEqual(host.hellos, Array(2).fill({ type: "hello", capabilities: ["run-boundary-v1"] }));
+  assert.deepEqual(host.frames, []);
   link.close();
   await host.close();
 });

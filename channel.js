@@ -5,8 +5,15 @@ import {
   createChannelPluginBase,
   createChatChannelPlugin,
 } from "openclaw/plugin-sdk/channel-core";
-import { dispatchInboundDirectDm } from "openclaw/plugin-sdk/channel-inbound";
+import {
+  buildChannelInboundEventContext,
+  dispatchChannelInboundTurn,
+  resolveChannelInboundRouteEnvelope,
+} from "openclaw/plugin-sdk/channel-inbound";
+import { createChannelReplyPipeline } from "openclaw/plugin-sdk/channel-reply-pipeline";
 import { PlatformMessageNotDispatchedError } from "openclaw/plugin-sdk/error-runtime";
+import { createInboundDispatcher } from "./dispatch.js";
+import { createRuns } from "./runs.js";
 import { connectYorozu } from "./socket.js";
 
 // One Yorozu thread = one OpenClaw direct peer, so each thread gets its own session
@@ -15,6 +22,16 @@ import { connectYorozu } from "./socket.js";
 // inbound message is the owner's.
 
 const DEFAULT_SOCKET = join(homedir(), "Library/Application Support/Yorozu/channel.sock");
+
+// Announced in every hello. model-select-v1 is not: see README ("Model selection").
+export const CAPABILITIES = ["run-boundary-v1"];
+
+const dispatchInbound = createInboundDispatcher({
+  resolveRoute: resolveChannelInboundRouteEnvelope,
+  buildContext: buildChannelInboundEventContext,
+  createReplyPipeline: createChannelReplyPipeline,
+  dispatchTurn: dispatchChannelInboundTurn,
+});
 
 const section = (cfg) => cfg.channels?.yorozu ?? {};
 
@@ -85,35 +102,26 @@ export const yorozuPlugin = createChatChannelPlugin({
     gateway: {
       startAccount: async (ctx) => {
         ctx.setStatus({ accountId: ctx.accountId, running: true, connected: false });
+        const runs = createRuns((frame) => current.send(frame));
         const current = connectYorozu({
           path: ctx.account.socketPath,
+          capabilities: CAPABILITIES,
+          onOpen: () => runs.replay(),
+          onAbort: (messageId) => runs.abort(messageId),
           onStatus: (connected) => ctx.setStatus({ accountId: ctx.accountId, running: true, connected }),
           onError: (message) => ctx.log?.warn?.(`yorozu: ${message}`),
-          onInbound: async (message) => {
-            await dispatchInboundDirectDm({
-              channelIngress: "unsupported",
-              cfg: ctx.cfg,
-              channel: "yorozu",
-              channelLabel: "Yorozu",
-              accountId: ctx.accountId,
-              peer: { kind: "direct", id: message.threadId },
-              senderId: "owner",
-              senderAddress: `yorozu:${message.threadId}`,
-              recipientAddress: "yorozu:openclaw",
-              conversationLabel: `Yorozu ${message.threadId}`,
-              rawBody: message.text,
-              messageId: message.id,
-              timestamp: message.ts,
-              commandAuthorized: true,
-              inboundAccessAuthorized: true,
-              deliver: async (payload) => {
-                const text = typeof payload?.text === "string" ? payload.text : "";
-                if (text.trim()) await send(message.threadId, text);
-              },
-              onRecordError: (error) => ctx.log?.error?.(`yorozu inbound record failed: ${String(error)}`),
-              onDispatchError: (error) => ctx.log?.error?.(`yorozu inbound dispatch failed: ${String(error)}`),
-            });
-          },
+          onInbound: (message) =>
+            runs.run(message, (signal, begin) =>
+              dispatchInbound({
+                cfg: ctx.cfg,
+                accountId: ctx.accountId,
+                message,
+                log: ctx.log,
+                deliver: async (payload) => {
+                  const text = typeof payload?.text === "string" ? payload.text : "";
+                  if (text.trim()) await send(message.threadId, text);
+                },
+              }, signal, begin)),
         });
         link = current;
         await new Promise((resolve) => {
