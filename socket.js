@@ -4,7 +4,10 @@
 //
 // Host frames:   { type: "inbound", message: { id, threadId, ts, text } }
 //                { type: "ack", id } | { type: "error", id, reason }
-// Plugin frames: { type: "deliver", id, threadId, text } | { type: "ack", id }
+//                { type: "abort", messageId }
+// Plugin frames: { type: "hello", capabilities } (first on every connection)
+//                { type: "deliver", id, threadId, text } | { type: "ack", id }
+//                { type: "run_started", messageId } | { type: "run_finished", messageId, status }
 import { randomUUID } from "node:crypto";
 import { createConnection } from "node:net";
 
@@ -14,9 +17,13 @@ import { createConnection } from "node:net";
  *   onInbound: (message: { id: string, threadId: string, ts: number, text: string }) => Promise<void>,
  *   onStatus?: (connected: boolean) => void,
  *   onError?: (message: string) => void,
+ *   capabilities?: string[],
+ *   onOpen?: () => void,
+ *   onAbort?: (messageId: string) => void,
  *   retryMs?: number,
  *   ackTimeoutMs?: number,
  * }} options `onInbound` resolves once OpenClaw has taken the message; only then is it acked.
+ * `capabilities` go out in the hello; `onOpen` runs right after it (replay run boundaries there).
  */
 export function connectYorozu(options) {
   const retryMs = options.retryMs ?? 2000;
@@ -28,7 +35,12 @@ export function connectYorozu(options) {
   let closed = false;
   let timer;
 
-  const write = (frame) => socket?.write(`${JSON.stringify(frame)}\n`);
+  // False when there is no live connection, so callers can keep the frame for the next one.
+  const write = (frame) => {
+    if (!connected) return false;
+    socket.write(`${JSON.stringify(frame)}\n`);
+    return true;
+  };
 
   const handle = (frame) => {
     if (frame.type === "inbound") {
@@ -45,6 +57,7 @@ export function connectYorozu(options) {
       );
       return;
     }
+    if (frame.type === "abort") return void options.onAbort?.(frame.messageId);
     const pending = waiting.get(frame.id);
     if (!pending) return;
     waiting.delete(frame.id);
@@ -60,6 +73,8 @@ export function connectYorozu(options) {
     next.setEncoding("utf8");
     next.on("connect", () => {
       connected = true;
+      write({ type: "hello", capabilities: options.capabilities ?? [] });
+      options.onOpen?.();
       options.onStatus?.(true);
     });
     next.on("data", (chunk) => {
@@ -108,6 +123,8 @@ export function connectYorozu(options) {
         write({ type: "deliver", id, threadId, text });
       });
     },
+    /** Sends a frame if connected; false means the caller must resend on the next `onOpen`. */
+    send: write,
     close() {
       closed = true;
       clearTimeout(timer);
